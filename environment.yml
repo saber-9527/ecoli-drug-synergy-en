@@ -1,0 +1,20 @@
+name: ecoli-synergy
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python=3.11
+  - cobra
+  - pandas
+  - numpy
+  - scikit-learn
+  - openpyxl
+  - joblib
+  - matplotlib
+  - scipy
+  - pip
+  - pip:
+      - xgboost
+      - lightgbm
+      - shap

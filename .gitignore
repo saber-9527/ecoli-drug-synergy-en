@@ -1,0 +1,61 @@
+# ============ Data files (large / reproducible - not committed) ============
+# Flux simulation outputs
+continuous_bounded_moma_*/
+flux_result/
+matched_flux/
+single-moma-input/
+gimme_*/
+imat_*/
+imat-standard-output_gimme*/
+standard-output_gimme/
+imat_result_pairs*/
+
+# Feature matrices & intermediate results
+non_additive_matrix/
+non_additive_matrix_v2/
+merged_matrix/
+combo_features_*.csv
+combo_A_B_C_features*.csv
+combination_feature_matrix.csv
+final_merged_dataset.csv
+flux_feature_matrix*.csv
+train*.csv
+test*.csv
+true*.csv
+
+# Prediction outputs
+predictions_all_combos/
+regression_predictions/
+ml_results*/
+
+# Model artifacts (generated at runtime)
+*.pkl
+*.joblib
+!models/*.pkl
+!models/*.joblib
+!models/iJO1366.json
+
+# Gene / single-drug raw data
+gene*/
+mapped-gene*/
+new-mapped-gene*/
+generated_combos/
+single_drug_*/
+
+# Raw data files (must be obtained separately)
+1-ecoli.xlsx
+cl.xlsx
+metadata*.csv
+*_raw.csv
+*_normalized.csv
+
+# ============ General ============
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+*.log
