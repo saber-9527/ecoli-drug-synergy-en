@@ -4,6 +4,11 @@ A workflow for predicting **antibiotic combination synergy in *E. coli* (K-12, i
 
 Starting from gene fitness data, the pipeline uses metabolic network simulation (MOMA) to derive the flux perturbation of each drug combination, builds a non-additive flux feature matrix, trains classification/regression models to predict combination synergy, and finally selects candidate combinations suitable for wet-lab validation.
 
+> **Before reading any score in this repo, read [PIPELINE.md](PIPELINE.md) § 0 — the
+> sign convention (`score < 0` = synergy) is easy to invert by accident.**
+> [PIPELINE.md](PIPELINE.md) also documents each stage's inputs/outputs, the measured
+> performance, and the known issues fixed so far.
+
 ## Pipeline overview
 
 ```
@@ -114,10 +119,13 @@ conda activate ecoli-synergy
 ### 1. Data preparation
 
 Put the data files in `data/` (this corresponds to the `../data/` paths in the code):
+
 - Gene fitness CSVs (e.g. `gene_combo-2/`)
 - Single-drug / combination MOMA results (`continuous_bounded_moma_single/`, `continuous_bounded_moma_all/`)
 - Training labels `metadata_merged.csv`
 - Literature data `1-ecoli.xlsx` (Nature Communications 2020, Supplementary Table 2)
+- External-validation data `desktop_new_pairs.xlsx` — see [Data sources](#data-sources)
+  for provenance and the **sign convention**, which is easy to get backwards.
 
 ### 2. Flux simulation
 
@@ -161,11 +169,66 @@ python 05_wetlab_selection/final_wetlab_selection.py
 | Regression | Ridge, GradientBoosting | Continuous Interaction Score |
 | Selection | Pharmacology review + training coverage + literature exclusion | M2 probability tiers + diversity |
 
+## Score sign convention — read before interpreting any score
+
+**In this project's data, `score < 0` means SYNERGY and `score > 0` means ANTAGONISM.**
+
+This is the single easiest thing to get backwards, and getting it backwards silently
+inverts every conclusion. It is verified with zero exceptions against the source
+paper's own `Interacion sign` column (`1-ecoli.xlsx`, Supplementary Table 2, n = 381):
+
+| `Interacion score` | `Interacion sign` | count |
+|---|---|---|
+| < 0 | Synergy | 161 |
+| > 0 | Antagonism | 220 |
+
+A sanity check: `Trimethoprim + Sulfamonomethoxine = −0.500` and is labelled Synergy —
+the classic folate double-block, as expected.
+
+Consequently:
+
+| Quantity | Meaning |
+|---|---|
+| `label = 1` in `metadata*.csv` | synergy (`label = 0` = antagonism) |
+| `proba_199_model`, `proba_411_model` | **P(synergy)** — column names are accurate |
+| Ranking candidates | sort by **descending** `proba_411_model` |
+
+Both literature sources used here share this direction (84 % directional agreement
+on the 19 drug pairs they have in common).
+
 ## Data sources
 
 - **iJO1366**: genome-scale metabolic model of *E. coli* K-12 MG1655 (Orth et al., 2011)
-- **Training labels**: high-throughput drug-interaction screen from Nature Communications (BW25113 / iAi1 strains)
 - **Gene fitness**: large-scale gene-knockout fitness data
+- **Training labels** (`metadata_merged.csv`, 411 pairs × 51 drugs):
+  high-throughput drug-interaction screen from *Nature Communications* 2020
+  (BW25113 / iAi1 strains), file `1-ecoli.xlsx` Supplementary Table 2.
+  Labels are **experimental**, not model output — verified against the raw
+  interaction scores with zero exceptions.
+- **External validation** (`desktop_new_pairs.xlsx`):
+  Chandrasekaran et al., *Chemogenomics and orthology-based design of antibiotic
+  combination therapies*, **Mol Syst Biol 12:872 (2016), Dataset EV1**
+  (published file `MSB-12-872-s003.xlsx`). 170 published rows plus one manual row
+  (`AMK + CEF`): **153 map onto the MOMA drug set**, 18 involve `H22` which is not
+  in that set. 85 of the 153 duplicate a training pair (deduplicated by
+  `merge_and_benchmark.py`; the cross-platform comparison is written to
+  `external_vs_train_labels.csv`).
+
+  ⚠️ Three caveats when using this file:
+  - Abbreviations must be expanded before matching MOMA output. **`CEF` = CEFOXITIN,
+    not Cefsulodin** — confirmed by matching against the Nature Communications sign
+    column (CEFOXITIN agrees 84 %, CEFSULODIN 73 %). Getting this wrong silently
+    drops 79 of the 153 usable pairs.
+  - The scores saturate at `4.3940` (four pairs share this exact value) and `H22`
+    scores 2.0–4.4 against all 18 of its partners, which is a hub artefact rather
+    than 18 genuine synergies. Prefer Spearman correlation against the continuous
+    score over hard binary MCC.
+  - The two platforms agree on only **88 %** of the 85 shared pairs. Treat
+    disagreements as measurement noise, not as labels to "correct".
+- **Not experimental — do not use for validation**: `MSB-12-872-s004.xlsx`
+  (Dataset EV2, 2627 pairs × 73 drugs × 3 species) contains **INDIGO model
+  predictions**, not measurements. `MSB-12-872-s005.xlsx` (EV3) holds the gene
+  rankings INDIGO uses internally.
 
 ## Notes
 

@@ -16,8 +16,11 @@ MIN_FREQ_RATIO   = 0.1
 MIN_FREQ_ABS     = 5
 
 # ── Drug abbreviation -> full name mapping ──
+# NOTE: external source (Mol Syst Biol 12:872, Dataset EV1) uses "CEF" for
+# CEFOXITIN, not Cefsulodin. Confirmed by matching 19 shared pairs against the
+# Nature Comms 2020 screen sign column: CEFOXITIN agrees 84%, CEFSULODIN 73%.
 ABBR_MAP = {
-    "AMK": "AMIKACIN", "CEF": "CEFSULODIN", "CHL": "CHLORAMPHENICOL",
+    "AMK": "AMIKACIN", "CEF": "CEFOXITIN", "CHL": "CHLORAMPHENICOL",
     "CIP": "CIPROFLOXACIN", "CLA": "CLARYTHROMYCIN", "ERY": "ERYTHROMYCIN",
     "FUS": "FUSIDICACID", "GEN": "GENTAMICIN", "LEV": "LEVOFLOXACIN",
     "NAL": "NALIDIXICACID", "NIT": "NITROFURANTOIN", "OXA": "OXACILLIN",
@@ -72,7 +75,10 @@ new_rows = []
 for pair, score in new_pairs:
     r = build_na_row(pair)
     r["score"] = score  # continuous regression target
-    r["label"] = 1 if score > 0 else 0  # binary label for classification
+    # Sign convention: in this source, score < 0 = SYNERGY, score > 0 = ANTAGONISM.
+    # Verified zero-exception against the source paper's own sign column.
+    # Label must therefore be 1 (synergy) when score < 0, matching metadata*.csv.
+    r["label"] = 1 if score < 0 else 0
     new_rows.append(r)
 
 X_new = pd.DataFrame(new_rows).fillna(0)
@@ -102,10 +108,44 @@ all_feat = [c for c in all_cols if c not in ["drug_pair", "label", "score"]]
 X_old_aligned = X_old.reindex(columns=["drug_pair", "label", "score"] + all_feat).fillna(0)
 X_new_aligned = X_new.reindex(columns=["drug_pair", "label", "score"] + all_feat).fillna(0)
 
+# Mark provenance before concat — note .fillna(0) above turns the old rows' NaN
+# score into 0.0, so the score column cannot be used to tell the two sets apart.
+X_old_aligned["_src"] = "old"
+X_new_aligned["_src"] = "new"
+
 # Merge
 X_merged = pd.concat([X_old_aligned, X_new_aligned], ignore_index=True)
 print(f"\nMerged (raw): {X_merged.shape}")
 print(f"  Old: {len(X_old)}  New: {len(X_new)}  Total: {len(X_merged)}")
+
+# ── Deduplicate ──
+# The external set shares drug pairs with the training set. Those rows carry
+# IDENTICAL MOMA features but labels from a different platform, so keeping both
+# feeds the model contradictory examples of the same input. Keep the training
+# row (the established label), drop the duplicate external row, and write the
+# overlapping pairs out separately — they are a useful cross-platform comparison.
+ov_pairs = set(X_old["drug_pair"]) & set(X_new["drug_pair"])
+if ov_pairs:
+    old_lab = dict(zip(X_old["drug_pair"], X_old["label"]))
+    new_lab = dict(zip(X_new["drug_pair"], X_new["label"]))
+    conflict = [p for p in ov_pairs if old_lab[p] != new_lab[p]]
+    print(f"\n  Overlap with training set: {len(ov_pairs)} pairs ({len(conflict)} with conflicting labels)")
+    agree_pct = (len(ov_pairs) - len(conflict)) / len(ov_pairs) * 100
+    print(f"  Cross-platform label agreement: {agree_pct:.1f}%")
+
+    cmp_rows = [{"drug_pair": p, "train_label": int(old_lab[p]),
+                 "external_label": int(new_lab[p]),
+                 "agree": int(old_lab[p] == new_lab[p])} for p in sorted(ov_pairs)]
+    cmp_path = os.path.join(OUT_DIR, "external_vs_train_labels.csv")
+    pd.DataFrame(cmp_rows).to_csv(cmp_path, index=False)
+    print(f"  Saved cross-platform comparison: {cmp_path}")
+
+    drop = X_merged["drug_pair"].isin(ov_pairs) & (X_merged["_src"] == "new")
+    X_merged = X_merged[~drop].reset_index(drop=True)
+    print(f"  After dedup: {X_merged.shape}  (dropped {int(drop.sum())} duplicate external rows)")
+    assert len(X_merged) == len(X_old) + len(X_new) - len(ov_pairs), "dedup dropped the wrong rows"
+
+X_merged = X_merged.drop(columns=["_src"])
 
 # Label distribution
 print(f"  Old labels: 1={X_old['label'].sum():.0f}, 0={(X_old['label']==0).sum():.0f}")
@@ -139,7 +179,7 @@ print(f"Saved normalized: {norm_path}  shape={X_norm.shape}")
 
 # ── BENCHMARK ──
 print("\n" + "="*80)
-print("  BENCHMARK: Old (411) vs Merged (411+74=485)")
+print(f"  BENCHMARK: Old ({len(X_old)}) vs Merged ({len(X_merged)})")
 print("="*80)
 
 from sklearn.ensemble import RandomForestClassifier
@@ -215,7 +255,7 @@ models = [
 
 results = []
 for name, mcls, grid, scaling in models:
-    for ver, Xdf in [("Old_411", X_old_norm), ("Merged_485", X_norm)]:
+    for ver, Xdf in [(f"Old_{len(X_old_norm)}", X_old_norm), (f"Merged_{len(X_norm)}", X_norm)]:
         metrics = run_one(f"{name}_{ver}", Xdf, mcls, grid, scaling)
         r = {
             "Model": f"{name}_{ver}",
@@ -243,7 +283,7 @@ for i, r in enumerate(sorted(results, key=lambda x: x["ROCm"], reverse=True)):
     delta = ""
     if "Merged" in r["Model"]:
         # find old counterpart
-        old_key = r["Model"].replace("Merged_485", "Old_411")
+        old_key = r["Model"].replace("Merged_", "Old_")
         old_r = next((x for x in results if x["Model"] == old_key), None)
         if old_r:
             d = r["ROCm"] - old_r["ROCm"]

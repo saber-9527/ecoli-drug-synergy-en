@@ -1,5 +1,7 @@
-# Use old 411 as training, new 74 (same drug pairs, different study) as held-out test
-# 74 pairs have overlap with old data - different labels from different experimental platform
+# Train on the 411-pair training set, test on external pairs from a different study.
+# The merged matrix is deduplicated, so the test set below holds only pairs the model
+# has NOT seen — a genuine held-out evaluation.
+# Sign convention: score < 0 = SYNERGY (verified against the source paper's own sign column).
 import os, warnings
 import numpy as np
 import pandas as pd
@@ -26,22 +28,23 @@ old_df = merged[old_mask].copy()
 new_df = merged[new_mask].copy()
 
 print(f"Old train: {len(old_df)}  (syn=1: {old_df['label'].sum():.0f}, non-syn=0: {(old_df['label']==0).sum():.0f})")
-print(f"New test:  {len(new_df)}  (score>0 (syn): {new_df['label'].sum():.0f}, score<=0 (non): {(new_df['label']==0).sum():.0f})")
+print(f"New test:  {len(new_df)}  (score<0 (syn): {new_df['label'].sum():.0f}, score>=0 (non): {(new_df['label']==0).sum():.0f})")
 print(f"New score range: {new_df['score'].min():.3f} ~ {new_df['score'].max():.3f}")
 
-# Inter-study agreement
-agree = 0
-disagree = 0
-for p in new_df["drug_pair"].unique():
-    ol = old_df[old_df["drug_pair"] == p]
-    nl = new_df[new_df["drug_pair"] == p]
-    if len(ol) > 0 and len(nl) > 0:
-        if ol.iloc[0]["label"] == nl.iloc[0]["label"]:
-            agree += 1
-        else:
-            disagree += 1
-print(f"Inter-study label agreement: {agree}/{agree+disagree} = {agree/(agree+disagree)*100:.1f}%")
-print(f"(Note: low agreement = different studies, different platforms, expected)")
+# Inter-study agreement.
+# The merged matrix is deduplicated: for a drug pair measured in both studies the
+# training row is kept and the external row dropped, so old_df and new_df never
+# overlap here. The overlap is exported separately with both labels.
+cmp_path = r"../data/merged_matrix\external_vs_train_labels.csv"
+if os.path.exists(cmp_path):
+    cmp_df = pd.read_csv(cmp_path)
+    agree = int(cmp_df["agree"].sum())
+    total = len(cmp_df)
+    print(f"Inter-study label agreement: {agree}/{total} = {agree / total * 100:.1f}%")
+    print(f"  (overlapping pairs, read from {os.path.basename(cmp_path)})")
+    print("  (low agreement = different studies, different platforms, expected)")
+else:
+    print("Inter-study label agreement: comparison file missing — run merge_and_benchmark.py first")
 
 # ── Prepare train/test ──
 id_cols = ["drug_pair", "label", "score"]
@@ -61,7 +64,7 @@ print(f"X_train: {X_train.shape}  X_test: {X_test.shape}")
 
 # ── Train on old, eval on new ──
 print("\n" + "="*80)
-print("  EXTERNAL VALIDATION: Train on Old 411, Test on New 74")
+print(f"  EXTERNAL VALIDATION: Train on Old {len(old_df)}, Test on New {len(new_df)}")
 print("="*80)
 
 RF_GRID = {
@@ -154,7 +157,7 @@ for name, model_class, grid, use_scaling in [
 
 # ── Summary ──
 print(f"\n{'='*80}")
-print(f"  SUMMARY: External Validation on New 74 Pairs")
+print(f"  SUMMARY: External Validation on {len(new_df)} Held-Out Pairs")
 print(f"{'='*80}")
 print(f"{'Model':<8} {'Acc':>8} {'F1':>8} {'ROC':>8} {'PR':>8} {'MCC':>8} {'Spearman ρ':>12}")
 print("-"*68)

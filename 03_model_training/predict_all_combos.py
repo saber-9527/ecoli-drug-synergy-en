@@ -48,6 +48,19 @@ feats2 = pd.read_csv(r"../data/final_model\feature_list_compact.csv")["Feature"]
 print("Model 1 (199-sample):", len(feats1), "features, C=0.01")
 print("Model 2 (411-sample):", len(feats2), "features, C=0.5623")
 
+# ---- Feature scale ----
+# Both models were trained on non_additive_normalized.csv, whose rows are
+# L1-normalised over the feature columns (step3_only.py:127):
+#     x_norm = x_raw[cols] / sum(|x_raw[cols]|)
+# The normalisation denominator was taken over exactly this column set, so the
+# same set has to be used here. Feeding raw deltas instead gives the model
+# values ~100x larger than it was fitted on, and predict_proba saturates at 1.0
+# (850 of 5565 pairs were tied at exactly 1.0 under the old behaviour).
+NORM_CSV = r"../data/non_additive_matrix/non_additive_normalized.csv"
+NORM_COLS = [c for c in pd.read_csv(NORM_CSV, nrows=1).columns
+             if c not in ("drug_pair", "label", "score")]
+print("Normalisation columns:", len(NORM_COLS))
+
 # ---- Single-drug list ----
 all_singles = sorted([
     f.replace("_FLUX.csv", "") for f in os.listdir(SINGLE_DIR) if f.endswith("_FLUX.csv")
@@ -102,6 +115,12 @@ for i, pair in enumerate(exist_pairs):
 
     # non-additive delta
     delta = cflux["ΔFlux"].sub(f1).sub(f2).dropna()
+
+    # L1 row normalisation, matching how the training matrices were built.
+    delta = delta.reindex(NORM_COLS).fillna(0.0)
+    _total = delta.abs().sum()
+    if _total > 0:
+        delta = delta / _total
     delta_dict = delta.to_dict()
 
     # ---- Model 1 (199, 968 features) ----
