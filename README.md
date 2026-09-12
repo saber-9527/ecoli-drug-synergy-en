@@ -4,10 +4,9 @@ A workflow for predicting **antibiotic combination synergy in *E. coli* (K-12, i
 
 Starting from gene fitness data, the pipeline uses metabolic network simulation (MOMA) to derive the flux perturbation of each drug combination, builds a non-additive flux feature matrix, trains classification/regression models to predict combination synergy, and finally selects candidate combinations suitable for wet-lab validation.
 
-> **Before reading any score in this repo, read [PIPELINE.md](PIPELINE.md) § 0 — the
-> sign convention (`score < 0` = synergy) is easy to invert by accident.**
-> [PIPELINE.md](PIPELINE.md) also documents each stage's inputs/outputs, the measured
-> performance, and the known issues fixed so far.
+> **Sign convention: `score < 0` = synergy, `score > 0` = antagonism.** This is easy to
+> invert by accident, so verify it against the source paper's `Interacion sign` column
+> before interpreting any score in this repo.
 
 ## Pipeline overview
 
